@@ -34,6 +34,7 @@ public class UsbPrinter implements EventChannel.StreamHandler{
     private static final String ACTION_USB_DETACHED = "android.hardware.usb.action.USB_DEVICE_DETACHED";
     private static final String TAG = "FlutterThermalPrinterPlugin";
     private   EventChannel.EventSink events;
+    private UsbDeviceConnection connection; // Store the connection globally
 
     private BroadcastReceiver createUsbStateChangeReceiver(final EventChannel.EventSink events) {
         return new BroadcastReceiver() {
@@ -103,24 +104,30 @@ public class UsbPrinter implements EventChannel.StreamHandler{
     }
 
 //    Connect using VendorId and ProductId
-    public    boolean connect(String vendorId, String productId){
-        UsbManager m = (UsbManager)context.getSystemService(USB_SERVICE);
-        HashMap<String, UsbDevice> usbDevices = m.getDeviceList();
-        UsbDevice device = null;
-        for (Map.Entry<String, UsbDevice> entry : usbDevices.entrySet()) {
-            if (String.valueOf(entry.getValue().getVendorId()).equals(vendorId) && String.valueOf(entry.getValue().getProductId()).equals(productId)){
-                device = entry.getValue();
-                break;
-            }
+   public boolean connect(String vendorId, String productId) {
+    UsbManager m = (UsbManager) context.getSystemService(USB_SERVICE);
+    HashMap<String, UsbDevice> usbDevices = m.getDeviceList();
+    UsbDevice device = null;
+    for (Map.Entry<String, UsbDevice> entry : usbDevices.entrySet()) {
+        if (String.valueOf(entry.getValue().getVendorId()).equals(vendorId)
+                && String.valueOf(entry.getValue().getProductId()).equals(productId)) {
+            device = entry.getValue();
+            break;
         }
-        if (device == null){
-            return false;
-        }
-        if (!m.hasPermission(device)){
-            m.requestPermission(device,mPermissionIntent);
-        }
-        return m.hasPermission(device);
     }
+    if (device == null) {
+        return false;
+    }
+    if (!m.hasPermission(device)) {
+        m.requestPermission(device, mPermissionIntent);
+    }
+    if (!m.hasPermission(device)) {
+        return false;
+    }
+
+    connection = m.openDevice(device); // Store the connection
+    return connection != null;
+}
 
 //    Print text on the printer
     public   void printText(String vendorId, String productId, List<Integer> bytes){
@@ -204,9 +211,9 @@ public class UsbPrinter implements EventChannel.StreamHandler{
             return false;
         }
         //  Release the interface
-        UsbDeviceConnection connection = m.openDevice(device); 
         connection.releaseInterface(device.getInterface(0));
-        connection.close(); 
+        connection.close(); // Close the stored connection
+        connection = null; // Set the connection to null to avoid reuse
         return true;
     }
 }

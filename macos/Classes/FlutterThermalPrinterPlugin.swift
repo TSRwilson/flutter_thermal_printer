@@ -72,15 +72,42 @@ public class FlutterThermalPrinterPlugin: NSObject, FlutterPlugin  , FlutterStre
     switch call.method {
     case "getPlatformVersion":
       result("macOS " + ProcessInfo.processInfo.operatingSystemVersionString)
-    case "getUsbDevicesList":
-        var devices = Array<String>()
+     case "getUsbDevicesList":
+        var devices = [String]()
         let matchingDict = IOServiceMatching(kIOUSBDeviceClassName)
         let iter = UnsafeMutablePointer<io_iterator_t>.allocate(capacity: 1)
+        defer {
+            iter.deallocate() // Ensure the iterator is always deallocated
+        }
         let kr = IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, iter)
         if kr != KERN_SUCCESS {
             print("Error getting services")
-            result(devices)
+            result(devices) // Return an empty array if services could not be retrieved
+            return
         }
+        while case let usbDevice = IOIteratorNext(iter.pointee), usbDevice != 0 {
+            guard let bsdPath = getBSDPath(for: usbDevice) else {
+                print("Unable to get BSD path for USB device. Skipping device.")
+                continue
+            }
+            if let deviceInfo = usbDevice.getInfo()?.toDictionary() {
+                var info = deviceInfo
+                info["bsdPath"] = bsdPath
+                if JSONSerialization.isValidJSONObject(info) {
+                    if let jsonData = try? JSONSerialization.data(withJSONObject: info, options: .prettyPrinted),
+                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                        devices.append(jsonString)
+                    } else {
+                        print("Failed to serialize deviceInfo to JSON.")
+                    }
+                } else {
+                    print("Invalid JSON object: \(info)")
+                }
+            } else {
+                print("Failed to retrieve device information.")
+            }
+        }
+        result(devices) // Ensure result is called only once
         while case let usbDevice = IOIteratorNext(iter.pointee), usbDevice != 0 {
             let bsdPath = getBSDPath(for: usbDevice)
             print(bsdPath as Any)
@@ -137,16 +164,14 @@ public class FlutterThermalPrinterPlugin: NSObject, FlutterPlugin  , FlutterStre
         return false
     }
     
-    
-    func getBSDPath(for usbDevice: io_service_t) -> String? {
-        guard let bsdNameAsCFString = IORegistryEntryCreateCFProperty(usbDevice, kIOBSDNameKey as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()else {
-            print("Unable to get BSD path for USB device.")
-            return nil
-        }
-        let bsdPath = bsdNameAsCFString as? String
-        print("BSD Path: \(String(describing: bsdPath))")
-        return bsdPath
+func getBSDPath(for usbDevice: io_service_t) -> String? {
+    guard let bsdNameAsCFString = IORegistryEntryCreateCFProperty(usbDevice, kIOBSDNameKey as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String else {
+        print("Unable to get BSD path for USB device with registry entry ID: \(usbDevice)")
+        return nil
     }
+    print("BSD Path: \(bsdNameAsCFString)")
+    return bsdNameAsCFString
+}
     public func printData(vendorID: String, productID: String, data: Array<Int>, path: String){
                 let serialPort = ORSSerialPort(path: path)
                 serialPort?.baudRate = 9600
